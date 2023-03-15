@@ -1,0 +1,11 @@
+{
+  "editor.quickSuggestions": {
+      "other": true,
+      "comments": false,
+      "strings": false
+    },
+  "editor.quickSuggestionsDelay": 10,
+  "files.exclude": {
+    "/opt/homwbrew/anaconda3/envs/iml": true
+  }
+}
