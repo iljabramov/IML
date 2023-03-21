@@ -4,7 +4,6 @@
 import pandas as pd
 import numpy as np
 from sklearn.model_selection import KFold
-from sklearn.linear_model import Ridge
 
 
 def fit(X: np.ndarray, y: np.ndarray, lam: int):
@@ -23,13 +22,9 @@ def fit(X: np.ndarray, y: np.ndarray, lam: int):
     ----------
     w: array of floats: dim = (13,), optimal parameters of ridge regression
     """
-    """I = np.eye(X.shape[1])
-    w = np.linalg.inv(X.T@X + lam*I) @ (X.T@y)"""
-    model = Ridge(alpha= lam, random_state= 42, copy_X=True)
-    model.fit(X, y)
-    w = model.coef_
+    I = np.eye(X.shape[1])
+    w = np.linalg.inv(X.T@X + lam*I) @ (X.T@y)
     assert w.shape == (13,)
-    print(w)
     return w
 
 
@@ -47,7 +42,7 @@ def calculate_RMSE(w: np.ndarray, X: np.ndarray, y: np.ndarray):
     ----------
     RMSE: float: dim = 1, RMSE value
     """
-    RMSE = np.sqrt(1/len(y) * np.linalg.norm(X.dot(w) - y))
+    RMSE = np.sqrt(1/len(y) * (np.linalg.norm(X.dot(w) - y)**2 ))
     assert np.isscalar(RMSE)
     return RMSE
 
