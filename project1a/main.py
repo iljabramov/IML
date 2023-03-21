@@ -23,9 +23,11 @@ def fit(X: np.ndarray, y: np.ndarray, lam: int):
     ----------
     w: array of floats: dim = (13,), optimal parameters of ridge regression
     """
-
-    I = np.eye(X.shape[1])
-    w = np.linalg.inv(X.T@X + lam*I) @ (X.T@y)
+    """I = np.eye(X.shape[1])
+    w = np.linalg.inv(X.T@X + lam*I) @ (X.T@y)"""
+    model = Ridge(alpha= lam, random_state= 42, copy_X=True)
+    model.fit(X, y)
+    w = model.coef_
     assert w.shape == (13,)
     print(w)
     return w
@@ -45,7 +47,7 @@ def calculate_RMSE(w: np.ndarray, X: np.ndarray, y: np.ndarray):
     ----------
     RMSE: float: dim = 1, RMSE value
     """
-    RMSE = np.sqrt(1/len(w) * np.linalg.norm(X.dot(w) - y))
+    RMSE = np.sqrt(1/len(y) * np.linalg.norm(X.dot(w) - y))
     assert np.isscalar(RMSE)
     return RMSE
 
@@ -67,7 +69,7 @@ def average_LR_RMSE(X, y, lambdas, n_folds):
     avg_RMSE: array of floats: dim = (5,), average RMSE value for every lambda
     """
     avg_RMSE = np.zeros(5)
-    kf = KFold(n_splits=n_folds, random_state=None, shuffle=False)
+    kf = KFold(n_splits=n_folds, shuffle=False)
     kf.get_n_splits(X)
     for i in range(len(lambdas)):
         sum_RMSE = 0
