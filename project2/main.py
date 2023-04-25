@@ -7,6 +7,7 @@ from sklearn.preprocessing import StandardScaler
 from sklearn.impute import KNNImputer
 from sklearn.gaussian_process import GaussianProcessRegressor
 from sklearn.gaussian_process.kernels import DotProduct, RBF, Matern, RationalQuadratic
+from sklearn.neighbors import KNeighborsRegressor
 
 
 def data_loading():
@@ -39,22 +40,15 @@ def data_loading():
 
     # drop seasons because they have little correlation with price
     tr_num = train_df.drop("season", axis = 1)
-    test_num = test_df.drop("season", axis = 1)
+    X_test = test_df.drop("season", axis = 1)
 
     # add missing features
     imputer = KNNImputer(n_neighbors=5)
     tr_num = pd.DataFrame(imputer.fit_transform(tr_num), columns= tr_num.keys())
-    test_num = pd.DataFrame(imputer.fit_transform(test_num), columns= test_num.keys())
 
     # get lables and data
     y_train = tr_num["price_CHF"].to_frame()
     X_train = tr_num.drop("price_CHF", axis = 1)
-    X_test = test_num
-
-    # transform data
-    std_scaler = StandardScaler()
-    X_train = pd.DataFrame(std_scaler.fit_transform(X_train), columns= X_train.keys())
-    X_test = pd.DataFrame(std_scaler.fit_transform(X_test), columns= X_test.keys())
 
     assert (X_train.shape[1] == X_test.shape[1]) and (X_train.shape[0] == y_train.shape[0]) and (X_test.shape[0] == 100), "Invalid data shape"
     return X_train, y_train, X_test
@@ -73,7 +67,14 @@ def modeling_and_prediction(X_train, y_train, X_test):
     ----------
     y_test: array of floats: dim = (100,), predictions on test set
     """
-    gpr = GaussianProcessRegressor(kernel=DotProduct(), random_state=42)
+    
+    # add missing features
+    conc = X_train.append(X_test, ignore_index = True)
+    imputer = KNNImputer(n_neighbors=5)
+    conc = pd.DataFrame(imputer.fit_transform(conc), columns= conc.keys())
+    X_test = conc.tail(len(X_test))
+    
+    gpr = KNeighborsRegressor()
     gpr.fit(X_train, y_train)
     y_pred = gpr.predict(X_test).flatten()
 
