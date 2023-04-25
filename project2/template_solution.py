@@ -1,13 +1,17 @@
 # This serves as a template which will guide you through the implementation of this task.  It is advised
 # to first read the whole template and get a sense of the overall structure of the code before trying to fill in any of the TODO gaps
 # First, we import necessary libraries:
+import math
 import numpy as np
 import pandas as pd
+from sklearn.metrics import r2_score
+from sklearn.model_selection import train_test_split
 from sklearn.preprocessing import StandardScaler
 from sklearn.impute import KNNImputer
-from sklearn.gaussian_process import GaussianProcessRegressor
-from sklearn.gaussian_process.kernels import DotProduct, RBF, Matern, RationalQuadratic
+import torch
 
+
+device = "cuda" if torch.cuda.is_available() else "cpu"
 
 def data_loading():
     """
@@ -59,7 +63,32 @@ def data_loading():
     assert (X_train.shape[1] == X_test.shape[1]) and (X_train.shape[0] == y_train.shape[0]) and (X_test.shape[0] == 100), "Invalid data shape"
     return X_train, y_train, X_test
 
-def modeling_and_prediction(X_train, y_train, X_test):
+def train_model(model, X, y, epochs = 40, lr = 0.001):
+  # define our loss and optimizer
+  criterion = torch.nn.MSELoss()
+  optimizer = torch.optim.Adam(model.parameters(), lr=lr)
+
+  # train the model
+  model.train()
+
+  for epoch in range(epochs):
+      running_loss = 0.0
+      for i, data in enumerate(X):
+          optimizer.zero_grad()
+
+          data = data.float().to(device)
+          pred = model(data)
+          loss = criterion(pred, y[i].to(torch.float).to(device))
+          loss.backward()
+  
+          optimizer.step()
+
+          running_loss += loss.item()
+      print(f'Epoch: {epoch + 1} loss: {running_loss / len(X):.5f}')
+
+      running_loss = 0.0
+
+def modeling_and_prediction(X_train: pd.DataFrame, y_train: pd.DataFrame, X_test):
     """
     This function defines the model, fits training data and then does the prediction with the test data 
 
@@ -73,22 +102,52 @@ def modeling_and_prediction(X_train, y_train, X_test):
     ----------
     y_test: array of floats: dim = (100,), predictions on test set
     """
-    gpr = GaussianProcessRegressor(kernel=DotProduct(), random_state=42)
-    gpr.fit(X_train, y_train)
-    y_pred = gpr.predict(X_test).flatten()
 
-    assert y_pred.shape == (100,), "Invalid data shape"
+    model = torch.nn.Sequential(
+        torch.nn.Linear(9, 24),
+        torch.nn.LeakyReLU(),
+        torch.nn.Linear(24, 24),
+        torch.nn.LeakyReLU(),
+        torch.nn.Linear(24, 24),
+        torch.nn.LeakyReLU(),
+        torch.nn.Linear(24, 24),
+        torch.nn.LeakyReLU(),
+        torch.nn.Linear(24, 24),
+        torch.nn.LeakyReLU(),
+        torch.nn.Linear(24, 24),
+        torch.nn.LeakyReLU(),
+        torch.nn.Linear(24, 24),
+        torch.nn.LeakyReLU(),
+        torch.nn.Linear(24, 24),
+        torch.nn.LeakyReLU(),
+        torch.nn.Linear(24, 24),
+        torch.nn.LeakyReLU(),
+        torch.nn.Linear(24, 24),
+        torch.nn.LeakyReLU(),
+        torch.nn.Linear(24, 9),
+        torch.nn.LeakyReLU(),
+        torch.nn.Linear(9, 1),
+        torch.nn.LeakyReLU(),
+    )
+
+    train_model(model, torch.Tensor(X_train.to_numpy()), torch.Tensor(y_train.to_numpy()), 200)
+
+    y_pred = model(torch.Tensor(X_test.to_numpy())).flatten()
+
+    assert y_pred.shape == (100,), y_pred.shape
     return y_pred
 
 # Main function. You don't have to change this
 if __name__ == "__main__":
     # Data loading
     X_train, y_train, X_test = data_loading()
+    # X_train_train, X_train_val, y_train_train, y_train_val = train_test_split(X_train, y_train, test_size=0.2, random_state=42)
     # The function retrieving optimal LR parameters
-    y_pred=modeling_and_prediction(X_train, y_train, X_test)
+    y_pred = modeling_and_prediction(X_train, y_train, X_test)
+    # score = r2_score(y_train_val, y_pred.detach().numpy())
+    # print(score)
     # Save results in the required format
-    dt = pd.DataFrame(y_pred) 
+    dt = pd.DataFrame(y_pred.detach().numpy()) 
     dt.columns = ['price_CHF']
     dt.to_csv('results.csv', index=False)
     print("\nResults file successfully generated!")
-
