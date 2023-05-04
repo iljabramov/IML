@@ -10,41 +10,82 @@ from torchvision import transforms
 import torchvision.datasets as datasets
 import torch.nn as nn
 import torch.nn.functional as F
+import torch.nn as nn
+import torchvision.models as models
+from torchvision.models.vgg import VGG16_Weights
+import torchvision.transforms as transforms
+from torch.utils.data import DataLoader, Dataset, random_split
+from PIL import Image
+import wandb
+import random
 
+
+PATH = 'dataset/'
+BATCH_SIZE=32
 
 device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
+
+class TripletDataset(Dataset):
+    def __init__(self, triplets, root_dir, file_to_embedding):
+        self.triplets = triplets
+        self.root_dir = root_dir
+        self.file_to_embedding = file_to_embedding
+
+
+    def __len__(self):
+        return len(self.triplets)
+
+    def __getitem__(self, idx):
+        anchor, positive, negative = self.triplets[idx].strip().split(' ')
+        
+        anchor = self.file_to_embedding[anchor]
+        positive = self.file_to_embedding[positive]
+        negative = self.file_to_embedding[negative]
+
+        return anchor, positive, negative
+
 
 def generate_embeddings():
     """
     Transform, resize and normalize the images and then use a pretrained model to extract 
     the embeddings.
     """
-    # TODO: define a transform to pre-process the images
-    train_transforms = transforms.Compose([transforms.ToTensor()])
-
-    train_dataset = datasets.ImageFolder(root="dataset/", transform=train_transforms)
-    # Hint: adjust batch_size and num_workers to your PC configuration, so that you don't 
-    # run out of memory
+    print("generating embeddings...")
+    train_transforms = transforms.Compose([
+        transforms.Resize(256),
+        transforms.CenterCrop(224),
+        transforms.ToTensor(),
+        transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
+    ])
+    print("transforming dataset")
+    train_dataset = datasets.ImageFolder(root=PATH, transform=train_transforms)
+    
     train_loader = DataLoader(dataset=train_dataset,
                               batch_size=64,
                               shuffle=False,
-                              pin_memory=True, num_workers=16)
+                              pin_memory=True, num_workers=10)
 
-    # TODO: define a model for extraction of the embeddings (Hint: load a pretrained model,
-    #  more info here: https://pytorch.org/vision/stable/models.html)
-    model = nn.Module()
+    model = models.vgg16(weights=VGG16_Weights.DEFAULT)
+    model = nn.Sequential(*list(model.children())[:-2])
+    for param in model.parameters():
+        param.requires_grad = False
     embeddings = []
-    embedding_size = 1000 # Dummy variable, replace with the actual embedding size once you 
-    # pick your model
-    num_images = len(train_dataset)
-    embeddings = np.zeros((num_images, embedding_size))
-    # TODO: Use the model to extract the embeddings. Hint: remove the last layers of the 
-    # model to access the embeddings the model generates. 
+    batches = len(train_loader)
+    print("embedding...")
+    for i, (batch, _) in enumerate(train_loader):
+        print("Batch", f'{i}/{batches:2}')
+        embedding = model(batch)
+        embedding = embedding.view(embedding.size(0), -1)
+        embeddings.append(embedding.detach().numpy())
+    embeddings = np.concatenate(embeddings, axis=0)
 
-    np.save('dataset/embeddings.npy', embeddings)
+    # Print the shape of the embedding
+    print("embedding shape:",embeddings.shape) 
+
+    np.save(PATH + 'embeddings.npy', embeddings)
 
 
-def get_data(file, train=True):
+def create_loader(file, batch_size=BATCH_SIZE, shuffle=True, val = False, num_workers = 4):
     """
     Load the triplets from the file and generate the features and labels.
 
@@ -54,58 +95,62 @@ def get_data(file, train=True):
     output: X: numpy array, the features
             y: numpy array, the labels
     """
+    print("getting data...")
     triplets = []
     with open(file) as f:
         for line in f:
             triplets.append(line)
-
-    # generate training data from triplets
-    train_dataset = datasets.ImageFolder(root="dataset/",
-                                         transform=None)
-    filenames = [s[0].split('/')[-1].replace('.jpg', '') for s in train_dataset.samples]
-    embeddings = np.load('dataset/embeddings.npy')
-    # TODO: Normalize the embeddings across the dataset
-
+            
+    embeddings = np.load(PATH + 'embeddings.npy')
     file_to_embedding = {}
+    dataset = datasets.ImageFolder(root=PATH,
+                                         transform=None)
+    filenames = [s[0].split('/')[-1].replace('.jpg', '') for s in dataset.samples]
     for i in range(len(filenames)):
         file_to_embedding[filenames[i]] = embeddings[i]
-    X = []
-    y = []
-    # use the individual embeddings to generate the features and labels for triplets
-    for t in triplets:
-        emb = [file_to_embedding[a] for a in t.split()]
-        X.append(np.hstack([emb[0], emb[1], emb[2]]))
-        y.append(1)
-        # Generating negative samples (data augmentation)
-        if train:
-            X.append(np.hstack([emb[0], emb[2], emb[1]]))
-            y.append(0)
-    X = np.vstack(X)
-    y = np.hstack(y)
-    return X, y
 
-# Hint: adjust batch_size and num_workers to your PC configuration, so that you don't run out of memory
-def create_loader_from_np(X, y = None, train = True, batch_size=64, shuffle=True, num_workers = 4):
-    """
-    Create a torch.utils.data.DataLoader object from numpy arrays containing the data.
-
-    input: X: numpy array, the features
-           y: numpy array, the labels
-    
-    output: loader: torch.data.util.DataLoader, the object containing the data
-    """
-    if train:
-        dataset = TensorDataset(torch.from_numpy(X).type(torch.float), 
-                                torch.from_numpy(y).type(torch.long))
-    else:
-        dataset = TensorDataset(torch.from_numpy(X).type(torch.float))
-    loader = DataLoader(dataset=dataset,
+    if val:
+        data_len = len(dataset)
+        val_size = int(data_len * 0.2)
+        random.seed(42)
+        random.shuffle(filenames)
+        val_triplets = []
+        val_count = 0
+        for name in filenames:
+            triplets_with_name = [triplet for triplet in triplets if name in triplet]
+            val_triplets.append(triplets_with_name)
+            val_count += len(triplets_with_name)
+            triplets = [triplet for triplet in triplets if name not in triplet]
+            if (val_count >= val_size):
+                break
+        
+        val_triplets = np.hstack(val_triplets)
+        train_triplets = triplets
+        train_set = TripletDataset(triplets=train_triplets, root_dir = PATH, file_to_embedding=file_to_embedding)
+        val_set = TripletDataset(triplets=val_triplets, root_dir = PATH, file_to_embedding=file_to_embedding)
+        train_loader = DataLoader(dataset=train_set,
                         batch_size=batch_size,
                         shuffle=shuffle,
                         pin_memory=True, num_workers=num_workers)
-    return loader
+        val_loader = DataLoader(dataset=val_set,
+                        batch_size=batch_size,
+                        shuffle=shuffle,
+                        pin_memory=True, num_workers=num_workers)
+    else:
+        dataset = TripletDataset(root_dir=PATH, triplets=triplets, file_to_embedding=file_to_embedding)
+        train_loader = DataLoader(dataset=dataset,
+                        batch_size=batch_size,
+                        shuffle=shuffle,
+                        pin_memory=True, num_workers=num_workers)
+        val_loader = None
+    return train_loader, val_loader
+    
+def triplet_loss(anchor, positive, negative, margin=1.0):
+    distance_positive = (anchor - positive).pow(2).sum(1)
+    distance_negative = (anchor - negative).pow(2).sum(1)
+    losses = F.relu(distance_positive - distance_negative + margin)
+    return losses.mean()
 
-# TODO: define a model. Here, the basic structure is defined, but you need to fill in the details
 class Net(nn.Module):
     """
     The model class, which defines our classifier.
@@ -115,68 +160,110 @@ class Net(nn.Module):
         The constructor of the model.
         """
         super().__init__()
-        self.fc = nn.Linear(3000, 1)
-
-    def forward(self, x):
-        """
-        The forward pass of the model.
-
-        input: x: torch.Tensor, the input to the model
-
-        output: x: torch.Tensor, the output of the model
-        """
-        x = self.fc(x)
+        vgg16 = models.vgg16(weights=VGG16_Weights.DEFAULT)
+        self.last_conv_layer = vgg16.features[-2]
+        self.fc1 = nn.Linear(25088, 512)
+        self.fc2 = nn.Linear(512, 256)
+        self.fc3 = nn.Linear(256, 256)
+        
+    def _onefoward(self, x):
+        x = self.last_conv_layer(x)
+        x = F.dropout(x)
+        x = self.fc1(x)
+        x = F.dropout(x)
         x = F.relu(x)
+        x = F.normalize(x)
+        x = self.fc2(x)
+        x = F.dropout(x)
+        x = F.relu(x)
+        x = F.normalize(x)
+        x = self.fc3(x)
         return x
+        
+        
+        
+    def forward(self, anchor, positive, negative):
+        anchor = self._onefoward(anchor)
+        positive = self._onefoward(positive)
+        negative = self._onefoward(negative)
+        
+        return anchor, positive, negative
 
-def train_model(train_loader):
-    """
-    The training procedure of the model; it accepts the training data, defines the model 
-    and then trains it.
-
-    input: train_loader: torch.data.util.DataLoader, the object containing the training data
-    
-    output: model: torch.nn.Module, the trained model
-    """
+def train_model(train_loader, val_loader= None, val=False):
     model = Net()
     model.train()
     model.to(device)
-    n_epochs = 10
-    # TODO: define a loss function, optimizer and proceed with training. Hint: use the part 
-    # of the training data as a validation split. After each epoch, compute the loss on the 
-    # validation split and print it out. This enables you to see how your model is performing 
-    # on the validation data before submitting the results on the server. After choosing the 
-    # best model, train it on the whole training data.
-    for epoch in range(n_epochs):        
-        for [X, y] in train_loader:
-            pass
+    # log wandb
+    wandb.watch(model, log="all")
+    n_epochs = 100
+    optimizer = torch.optim.Adam(model.parameters(), lr=0.01)
+
+    for epoch in range(n_epochs):
+        epoch_loss = 0.0
+        for anchor, positive, negative in train_loader:
+            model.train()
+            anchor, positive, negative = anchor.to(device), positive.to(device), negative.to(device)
+
+            optimizer.zero_grad()
+
+            anchor_embedding, positive_embedding, negative_embedding = model(anchor, positive, negative)
+            loss = triplet_loss(anchor_embedding, positive_embedding, negative_embedding)
+
+            loss.backward()
+            optimizer.step()
+
+            epoch_loss += loss.item()
+        
+        epoch_loss /= len(train_loader)
+        log = {"train loss": epoch_loss}
+        val_loss = 0
+        if val:
+            model.eval()
+            with torch.no_grad():
+                false_predictions = []
+                for anchor, pos, neg in val_loader:
+                    anchor, pos, neg = anchor.to(device), pos.to(device), neg.to(device)
+                    anchor_emb, pos_emb, neg_emb = model(anchor, pos, neg)
+                    distance_pos = (anchor_emb - pos_emb).pow(2).sum(1)
+                    distance_neg = (anchor_emb - neg_emb).pow(2).sum(1)
+                    f_pred = (distance_pos >= distance_neg).type(torch.int).cpu().numpy() # 1 if false, 0 if true
+                    false_predictions.append(f_pred)
+                false_predictions = np.hstack(false_predictions)
+                false_pred_percent = false_predictions.sum(0) / len(false_predictions)
+                log["val loss (wrong percent)"] = false_pred_percent
+                val_loss = false_pred_percent
+
+        print(f'epoch: {epoch:2}  loss: {epoch_loss:10.8f} validation loss: {val_loss:10.8f}')
+        wandb.log(log)
+        if epoch > 0 and epoch % 10 == 0:
+            modelname = f'{epoch:2}model.pth'
+            path = 'checkpoints/'+modelname
+            torch.save(model.state_dict(), path)
+            wandb.save(path)
+
     return model
 
-def test_model(model, loader):
-    """
-    The testing procedure of the model; it accepts the testing data and the trained model and 
-    then tests the model on it.
-
-    input: model: torch.nn.Module, the trained model
-           loader: torch.data.util.DataLoader, the object containing the testing data
-        
-    output: None, the function saves the predictions to a results.txt file
-    """
-    model.eval()
+def test_model(loader, model_exists):
+    model = Net()
+    model.load_state_dict(torch.load('model.pth'))
+    model.to(device)
     predictions = []
-    # Iterate over the test data
-    with torch.no_grad(): # We don't need to compute gradients for testing
-        for [x_batch] in loader:
-            x_batch= x_batch.to(device)
-            predicted = model(x_batch)
-            predicted = predicted.cpu().numpy()
-            # Rounding the predictions to 0 or 1
-            predicted[predicted >= 0.5] = 1
-            predicted[predicted < 0.5] = 0
-            predictions.append(predicted)
-        predictions = np.vstack(predictions)
+    model.eval()
+    with torch.no_grad():
+        for anchor, a, b in loader:
+            anchor, a, b = anchor.to(device), a.to(device), b.to(device)
+            anchor_emb, a_emb, b_emb = model(anchor, a, b)
+            distance_a = (anchor_emb - a_emb).pow(2).sum(1)
+            distance_b = (anchor_emb - b_emb).pow(2).sum(1)
+            pred = (distance_a < distance_b).type(torch.int).cpu().numpy()
+            predictions.append(pred)
+        predictions = np.hstack(predictions)
+    # save predicitons
     np.savetxt("results.txt", predictions, fmt='%i')
+    if model_exists == False:
+        wandb.save("results.txt")
 
+    
 
 # Main function. You don't have to change this
 if __name__ == '__main__':
@@ -184,20 +271,23 @@ if __name__ == '__main__':
     TEST_TRIPLETS = 'test_triplets.txt'
 
     # generate embedding for each image in the dataset
-    if(os.path.exists('dataset/embeddings.npy') == False):
+    if(os.path.exists(PATH + 'embeddings.npy') == False):
         generate_embeddings()
 
-    # load the training and testing data
-    X, y = get_data(TRAIN_TRIPLETS)
-    X_test, _ = get_data(TEST_TRIPLETS, train=False)
-
-    # Create data loaders for the training and testing data
-    train_loader = create_loader_from_np(X, y, train = True, batch_size=64)
-    test_loader = create_loader_from_np(X_test, train = False, batch_size=2048, shuffle=False)
-
     # define a model and train it
-    model = train_model(train_loader)
+    model_exists = os.path.exists('model.pth')
+    if(model_exists== False):
+        # init wandb
+        wandb.init(project="project3IML")
+        
+        # Create train_data loader
+        train_loader, val_loader = create_loader(TRAIN_TRIPLETS, batch_size=BATCH_SIZE, shuffle= True, val = True)
+        model = train_model(train_loader, val_loader, val=True)
+    
+        # save model
+        torch.save(model.state_dict(), 'model.pth')
+        wandb.save('model.pth')
     
     # test the model on the test data
-    test_model(model, test_loader)
-    print("Results saved to results.txt")
+    test_loader, _ = create_loader(TEST_TRIPLETS, batch_size=2048, shuffle=False)
+    test_model(test_loader, model_exists)
