@@ -168,13 +168,10 @@ class Net(nn.Module):
         
     def _onefoward(self, x):
         x = self.last_conv_layer(x)
-        x = F.dropout(x)
         x = self.fc1(x)
-        x = F.dropout(x)
         x = F.relu(x)
         x = F.normalize(x)
         x = self.fc2(x)
-        x = F.dropout(x)
         x = F.relu(x)
         x = F.normalize(x)
         x = self.fc3(x)
@@ -196,7 +193,7 @@ def train_model(train_loader, val_loader= None, val=False):
     # log wandb
     wandb.watch(model, log="all")
     n_epochs = 100
-    optimizer = torch.optim.Adam(model.parameters(), lr=0.01)
+    optimizer = torch.optim.Adam(model.parameters(), lr=0.001)
 
     for epoch in range(n_epochs):
         epoch_loss = 0.0
