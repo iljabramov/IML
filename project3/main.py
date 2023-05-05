@@ -19,7 +19,7 @@ import random
 
 
 PATH = 'dataset/'
-BATCH_SIZE=32
+BATCH_SIZE=64
 
 device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 
@@ -59,7 +59,7 @@ def generate_embeddings():
     train_dataset = datasets.ImageFolder(root=PATH, transform=train_transforms)
     
     train_loader = DataLoader(dataset=train_dataset,
-                              batch_size=64,
+                              batch_size=BATCH_SIZE,
                               shuffle=False,
                               pin_memory=True, num_workers=10)
 
@@ -160,8 +160,7 @@ class Net(nn.Module):
         The constructor of the model.
         """
         super().__init__()
-        vgg16 = models.vgg16(weights=VGG16_Weights.DEFAULT)
-        self.last_conv_layer = nn.AdaptiveAvgPool2d(output_size = (7,7))
+        self.last_conv_layer = nn.AdaptiveAvgPool2d(output_size=(7, 7))
         self.fc1 = nn.Linear(25088, 512)
         self.fc2 = nn.Linear(512, 256)
         self.fc3 = nn.Linear(256, 256)
