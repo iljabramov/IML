@@ -3,19 +3,17 @@
 # First, we import necessary libraries:
 import numpy as np
 from torchvision import transforms
-from torch.utils.data import DataLoader, TensorDataset
+from torch.utils.data import DataLoader
 import os
 import torch
 from torchvision import transforms
 import torchvision.datasets as datasets
 import torch.nn as nn
 import torch.nn.functional as F
-import torch.nn as nn
 import torchvision.models as models
 from torchvision.models.vgg import VGG16_Weights
 import torchvision.transforms as transforms
-from torch.utils.data import DataLoader, Dataset, random_split
-from PIL import Image
+from torch.utils.data import DataLoader, Dataset
 import wandb
 import random
 
@@ -66,17 +64,19 @@ def generate_embeddings():
                               pin_memory=True, num_workers=10)
 
     model = models.vgg16(weights=VGG16_Weights.DEFAULT)
-    model = nn.Sequential(*list(model.children())[:-2])
+    # get first 20 layers to create embedding
+    model = nn.Sequential(*list(model.children())[0])
     for param in model.parameters():
         param.requires_grad = False
     embeddings = []
     batches = len(train_loader)
     print("embedding...")
+    model = model.to(device)
     for i, (batch, _) in enumerate(train_loader):
         print("Batch", f'{i}/{batches:2}')
+        batch = batch.to(device)
         embedding = model(batch)
-        embedding = embedding.view(embedding.size(0), -1)
-        embeddings.append(embedding.detach().numpy())
+        embeddings.append(embedding.cpu().detach().numpy())
     embeddings = np.concatenate(embeddings, axis=0)
 
     # Print the shape of the embedding
@@ -161,13 +161,14 @@ class Net(nn.Module):
         """
         super().__init__()
         vgg16 = models.vgg16(weights=VGG16_Weights.DEFAULT)
-        self.last_conv_layer = vgg16.features[-2]
+        self.last_conv_layer = nn.AdaptiveAvgPool2d(output_size = (7,7))
         self.fc1 = nn.Linear(25088, 512)
         self.fc2 = nn.Linear(512, 256)
         self.fc3 = nn.Linear(256, 256)
         
     def _onefoward(self, x):
         x = self.last_conv_layer(x)
+        x = x.view(x.size(0), -1)
         x = self.fc1(x)
         x = F.relu(x)
         x = F.normalize(x)
@@ -176,8 +177,6 @@ class Net(nn.Module):
         x = F.normalize(x)
         x = self.fc3(x)
         return x
-        
-        
         
     def forward(self, anchor, positive, negative):
         anchor = self._onefoward(anchor)
@@ -189,16 +188,16 @@ class Net(nn.Module):
 def train_model(train_loader, val_loader= None, val=False):
     model = Net()
     model.train()
-    model.to(device)
+    model = model.to(device)
     # log wandb
     wandb.watch(model, log="all")
-    n_epochs = 100
+    n_epochs = 30
     optimizer = torch.optim.Adam(model.parameters(), lr=0.001)
 
     for epoch in range(n_epochs):
         epoch_loss = 0.0
+        model.train()
         for anchor, positive, negative in train_loader:
-            model.train()
             anchor, positive, negative = anchor.to(device), positive.to(device), negative.to(device)
 
             optimizer.zero_grad()
@@ -261,9 +260,7 @@ def test_model(loader, model_exists):
         wandb.save("results.txt")
 
     
-
-# Main function. You don't have to change this
-if __name__ == '__main__':
+def main():
     TRAIN_TRIPLETS = 'train_triplets.txt'
     TEST_TRIPLETS = 'test_triplets.txt'
 
@@ -278,13 +275,18 @@ if __name__ == '__main__':
         wandb.init(project="project3IML")
         
         # Create train_data loader
-        train_loader, val_loader = create_loader(TRAIN_TRIPLETS, batch_size=BATCH_SIZE, shuffle= True, val = True)
-        model = train_model(train_loader, val_loader, val=True)
+        val = False
+        train_loader, val_loader = create_loader(TRAIN_TRIPLETS, batch_size=BATCH_SIZE, shuffle= True, val = val)
+        model = train_model(train_loader, val_loader, val=val)
     
         # save model
         torch.save(model.state_dict(), 'model.pth')
         wandb.save('model.pth')
     
     # test the model on the test data
-    test_loader, _ = create_loader(TEST_TRIPLETS, batch_size=2048, shuffle=False)
+    test_loader, _ = create_loader(TEST_TRIPLETS, batch_size=BATCH_SIZE, shuffle=False)
     test_model(test_loader, model_exists)
+
+# Main function. You don't have to change this
+if __name__ == '__main__':
+    main()
