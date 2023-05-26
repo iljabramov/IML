@@ -16,8 +16,8 @@ from sklearn.base import BaseEstimator, TransformerMixin
 device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 print(f"Using {device}")
 
-BATCH_SIZE = 59515
-EPOCHS = 200
+BATCH_SIZE = 64
+EPOCHS = 10
 LR = 0.002
 
 def delete_models():
@@ -34,10 +34,10 @@ class Feature_Net(nn.Module):
         The constructor of the model.
         """
         super().__init__()
-        self.fc1 = nn.Linear(1024, 1024)
-        self.fc2 = nn.Linear(1024, 1024)
-        self.fc3 = nn.Linear(1024, 1024)
-        self.fc4 = nn.Linear(1024, 512)
+        self.fc1 = nn.Linear(1000, 1000)
+        self.fc2 = nn.Linear(1000, 1000)
+        self.fc3 = nn.Linear(1000, 1000)
+        self.fc4 = nn.Linear(1000, 512)
         self.fc5 = nn.Linear(512, 124)
         self.fc6 = nn.Linear(124, 36)
         self.fc7 = nn.Linear(36, 12)
@@ -113,8 +113,11 @@ def feature_extractor_model(batch_size=256, eval_size=1000):
         model.train()
         for data in train_dataloader:
             x, y = data
+            x = x.to(device)
+            y = y.to(device)
             optimizer.zero_grad()
             y_pred = model(x)
+            y_pred = torch.flatten(y_pred)
             loss = loss_fn(y_pred, y)
             loss.backward()
             optimizer.step()
@@ -123,10 +126,13 @@ def feature_extractor_model(batch_size=256, eval_size=1000):
             train_batches += 1
         
         model.eval()
-        with torch.no_grad:
+        with torch.no_grad():
             for data in val_dataloader:
                 x, y = data
+                x = x.to(device)
+                y = y.to(device)
                 y_pred = model(x)
+                y_pred = torch.flatten(y_pred)
                 loss = loss_fn(y_pred, y)
     
                 running_val_loss += loss.item()
