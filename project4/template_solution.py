@@ -7,6 +7,8 @@ import torch
 import torch.nn as nn
 import os
 import wandb
+import torch.nn.functional as F
+from torch.utils.data import DataLoader, TensorDataset
 
 from sklearn.model_selection import train_test_split
 from sklearn.base import BaseEstimator, TransformerMixin
@@ -14,12 +16,16 @@ from sklearn.base import BaseEstimator, TransformerMixin
 device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 print(f"Using {device}")
 
+BATCH_SIZE = 59515
+EPOCHS = 200
+LR = 0.002
+
 def delete_models():
     for file in os.listdir("."):
         if file.endswith(".pth"):
             os.remove(file)
 
-class Net(nn.Module):
+class Feature_Net(nn.Module):
     """
     The model class, which defines our feature extractor used in pretraining.
     """
@@ -28,9 +34,14 @@ class Net(nn.Module):
         The constructor of the model.
         """
         super().__init__()
-        # TODO: Define the architecture of the model. It should be able to be trained on pretraing data 
-        # and then used to extract features from the training and test data.
-
+        self.fc1 = nn.Linear(1024, 1024)
+        self.fc2 = nn.Linear(1024, 1024)
+        self.fc3 = nn.Linear(1024, 1024)
+        self.fc4 = nn.Linear(1024, 512)
+        self.fc5 = nn.Linear(512, 124)
+        self.fc6 = nn.Linear(124, 36)
+        self.fc7 = nn.Linear(36, 12)
+        self.fc8 = nn.Linear(12, 1)
 
     def forward(self, x):
         """
@@ -40,19 +51,35 @@ class Net(nn.Module):
 
         output: x: torch.Tensor, the output of the model
         """
-        # TODO: Implement the forward pass of the model, in accordance with the architecture 
-        # defined in the constructor.
+        x = self.fc1(x)
+        x = F.dropout(x, p=0.2)
+        x = F.leaky_relu(x)
+        x = self.fc2(x)
+        x = F.dropout(x, p=0.2)
+        x = F.leaky_relu(x)
+        x = self.fc3(x)
+        x = F.dropout(x, p=0.2)
+        x = F.leaky_relu(x)
+        x = self.fc4(x)
+        x = F.dropout(x, p=0.2)
+        x = F.leaky_relu(x)
+        x = self.fc5(x)
+        x = F.dropout(x, p=0.2)
+        x = F.leaky_relu(x)
+        x = self.fc6(x)
+        x = F.dropout(x, p=0.2)
+        x = F.leaky_relu(x)
+        x = self.fc7(x)
+        x = self.fc8(x)
         return x
     
-def make_feature_extractor(batch_size=256, eval_size=1000):
+def feature_extractor_model(batch_size=256, eval_size=1000):
     """
-    This function trains the feature extractor on the pretraining data and returns a function which
-    can be used to extract features from the training and test data.
+    This function trains the feature extractor on the pretraining data.
 
     input:  batch_size: int, the batch size used for training
             eval_size: int, the size of the validation set
             
-    output: make_features: function, a function which can be used to extract features from the training and test data
     """
     x = pd.read_csv("dataset/pretrain_features.csv.zip", index_col="Id", compression='zip').drop("smiles", axis=1).to_numpy()
     y = pd.read_csv("dataset/pretrain_labels.csv.zip", index_col="Id", compression='zip').to_numpy().squeeze(-1)
@@ -60,16 +87,67 @@ def make_feature_extractor(batch_size=256, eval_size=1000):
     
     
     in_features = x.shape[-1]
-    x_tr, x_val, y_tr, y_val = train_test_split(x, y, test_size=eval_size, random_state=0, shuffle=True)
+    x_tr, x_val, y_tr, y_val = train_test_split(x, y, test_size=eval_size, random_state=42, shuffle=True)
     x_tr, x_val = torch.tensor(x_tr, dtype=torch.float), torch.tensor(x_val, dtype=torch.float)
     y_tr, y_val = torch.tensor(y_tr, dtype=torch.float), torch.tensor(y_val, dtype=torch.float)
-
-    # model declaration
-    model = Net()
-    model.train()
+    train_dataset = TensorDataset(x_tr,y_tr)
+    val_dataset = TensorDataset(x_val, y_val)
+    train_dataloader = DataLoader(train_dataset, batch_size=BATCH_SIZE, shuffle=True)
+    val_dataloader = DataLoader(val_dataset, batch_size=BATCH_SIZE, shuffle=True)
     
-    # TODO: Implement the training loop. The model should be trained on the pretraining data. Use validation set 
-    # to monitor the loss.
+    
+    print("Training Feature model...")
+    model = Feature_Net().to(device)
+    wandb.watch(model, log="all")
+
+    loss_fn = nn.MSELoss()
+    optimizer = torch.optim.Adamax(model.parameters(), lr=LR)
+
+    best_loss = float("inf")
+    for epoch in range(EPOCHS):
+        running_train_loss = 0.
+        running_val_loss = 0.
+        train_batches = 0
+        val_batches = 0
+        
+        model.train()
+        for data in train_dataloader:
+            x, y = data
+            optimizer.zero_grad()
+            y_pred = model(x)
+            loss = loss_fn(y_pred, y)
+            loss.backward()
+            optimizer.step()
+            
+            running_train_loss += loss.item()
+            train_batches += 1
+        
+        model.eval()
+        with torch.no_grad:
+            for data in val_dataloader:
+                x, y = data
+                y_pred = model(x)
+                loss = loss_fn(y_pred, y)
+    
+                running_val_loss += loss.item()
+                val_batches += 1
+        
+        av_train_loss = running_train_loss / train_batches
+        av_val_loss = running_val_loss / val_batches
+        wandb.log({"training_loss": av_train_loss, "validation_loss": av_val_loss})
+
+        if 20 <= epoch and (av_train_loss < best_loss or epoch % 10 == 9):
+            path = f"model_{epoch}.pth"
+            best_loss = min(best_loss, av_train_loss)
+            torch.save(model.state_dict(), path)
+            wandb.save(path)
+            os.system(f"cp {path} feature_extractor.pth")
+
+        if epoch % 10 == 9:
+            print(f"epoch {epoch + 1} done.")
+
+    wandb.save("feature_extractor.pth")
+    print("Done.")
 
 
 
@@ -88,52 +166,6 @@ def make_feature_extractor(batch_size=256, eval_size=1000):
         return x
 
     return make_features
-
-def make_pretraining_class(feature_extractors):
-    """
-    The wrapper function which makes pretraining API compatible with sklearn pipeline
-    
-    input: feature_extractors: dict, a dictionary of feature extractors
-
-    output: PretrainedFeatures: class, a class which implements sklearn API
-    """
-
-    class PretrainedFeatures(BaseEstimator, TransformerMixin):
-        """
-        The wrapper class for Pretraining pipeline.
-        """
-        def __init__(self, *, feature_extractor=None, mode=None):
-            self.feature_extractor = feature_extractor
-            self.mode = mode
-
-        def fit(self, X=None, y=None):
-            return self
-
-        def transform(self, X):
-            assert self.feature_extractor is not None
-            X_new = feature_extractors[self.feature_extractor](X)
-            return X_new
-        
-    return PretrainedFeatures
-
-def get_regression_model():
-    """
-    This function returns the regression model used in the pipeline.
-
-    input: None
-
-    output: model: sklearn compatible model, the regression model
-    """
-    # TODO: Implement the regression model. It should be able to be trained on the features extracted
-    # by the feature extractor.
-    model = None
-    return model
-
-def feature_extractor_model():
-    wandb.init(project="project3IML")
-    feature_extractor =  make_feature_extractor()
-    PretrainedFeatureClass = make_pretraining_class({"pretrain": feature_extractor})
-    return 
 
 def test():
     x_test = pd.read_csv("dataset/test_features.csv.zip", index_col="Id", compression='zip').drop("smiles", axis=1)
@@ -158,14 +190,13 @@ def main():
     #delete_models()
     
     if not os.path.exists('feature_extractor.pth'):
+        wandb.init(project="project4IML")
         feature_extractor_model()
     
-    if not os.path.exists('model.pth'):
-        train_model()
+    #if not os.path.exists('model.pth'):
+        #train_model()
 
-    test()
+    #test()
     
-
-# Main function. You don't have to change this
 if __name__ == '__main__':
     main()
