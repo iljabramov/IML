@@ -4,3 +4,4 @@ checkpoints/
 embeddings/
 miniset/
 featuremodel/
+*.pth

@@ -6,6 +6,7 @@ import numpy as np
 import torch
 import torch.nn as nn
 import os
+import wandb
 
 from sklearn.model_selection import train_test_split
 from sklearn.base import BaseEstimator, TransformerMixin
@@ -15,27 +16,8 @@ print(f"Using {device}")
 
 def delete_models():
     for file in os.listdir("."):
-        if file.startswith("model_"):
+        if file.endswith(".pth"):
             os.remove(file)
-
-def load_data():
-    """
-    This function loads the data from the csv files and returns it as numpy arrays.
-
-    input: None
-    
-    output: x_pretrain: np.ndarray, the features of the pretraining set
-            y_pretrain: np.ndarray, the labels of the pretraining set
-            x_train: np.ndarray, the features of the training set
-            y_train: np.ndarray, the labels of the training set
-            x_test: np.ndarray, the features of the test set
-    """
-    x_pretrain = pd.read_csv("dataset/pretrain_features.csv.zip", index_col="Id", compression='zip').drop("smiles", axis=1).to_numpy()
-    y_pretrain = pd.read_csv("dataset/pretrain_labels.csv.zip", index_col="Id", compression='zip').to_numpy().squeeze(-1)
-    x_train = pd.read_csv("dataset/train_features.csv.zip", index_col="Id", compression='zip').drop("smiles", axis=1).to_numpy()
-    y_train = pd.read_csv("dataset/train_labels.csv.zip", index_col="Id", compression='zip').to_numpy().squeeze(-1)
-    x_test = pd.read_csv("dataset/test_features.csv.zip", index_col="Id", compression='zip').drop("smiles", axis=1)
-    return x_pretrain, y_pretrain, x_train, y_train, x_test
 
 class Net(nn.Module):
     """
@@ -62,19 +44,21 @@ class Net(nn.Module):
         # defined in the constructor.
         return x
     
-def make_feature_extractor(x, y, batch_size=256, eval_size=1000):
+def make_feature_extractor(batch_size=256, eval_size=1000):
     """
     This function trains the feature extractor on the pretraining data and returns a function which
     can be used to extract features from the training and test data.
 
-    input: x: np.ndarray, the features of the pretraining set
-              y: np.ndarray, the labels of the pretraining set
-                batch_size: int, the batch size used for training
-                eval_size: int, the size of the validation set
+    input:  batch_size: int, the batch size used for training
+            eval_size: int, the size of the validation set
             
     output: make_features: function, a function which can be used to extract features from the training and test data
     """
-    # Pretraining data loading
+    x = pd.read_csv("dataset/pretrain_features.csv.zip", index_col="Id", compression='zip').drop("smiles", axis=1).to_numpy()
+    y = pd.read_csv("dataset/pretrain_labels.csv.zip", index_col="Id", compression='zip').to_numpy().squeeze(-1)
+    print("Pretrain data loaded!")
+    
+    
     in_features = x.shape[-1]
     x_tr, x_val, y_tr, y_val = train_test_split(x, y, test_size=eval_size, random_state=0, shuffle=True)
     x_tr, x_val = torch.tensor(x_tr, dtype=torch.float), torch.tensor(x_val, dtype=torch.float)
@@ -145,20 +129,14 @@ def get_regression_model():
     model = None
     return model
 
-def main():
-    if not os.path.exists('embeddings.npy'):
-        make_embeds()
-    # Load data
-    x_pretrain, y_pretrain, x_train, y_train, x_test = load_data()
-    print("Data loaded!")
-    # Utilize pretraining data by creating feature extractor which extracts lumo energy 
-    # features from available initial features
-    feature_extractor =  make_feature_extractor(x_pretrain, y_pretrain)
+def feature_extractor_model():
+    wandb.init(project="project3IML")
+    feature_extractor =  make_feature_extractor()
     PretrainedFeatureClass = make_pretraining_class({"pretrain": feature_extractor})
-    
-    # regression model
-    regression_model = get_regression_model()
+    return 
 
+def test():
+    x_test = pd.read_csv("dataset/test_features.csv.zip", index_col="Id", compression='zip').drop("smiles", axis=1)
     y_pred = np.zeros(x_test.shape[0])
     # TODO: Implement the pipeline. It should contain feature extraction and regression. You can optionally
     # use other sklearn tools, such as StandardScaler, FunctionTransformer, etc.
@@ -167,6 +145,26 @@ def main():
     y_pred = pd.DataFrame({"y": y_pred}, index=x_test.index)
     y_pred.to_csv("results.csv", index_label="Id")
     print("Predictions saved, all done!")
+    return
+
+def train_model():
+    # load data
+    x_train = pd.read_csv("dataset/train_features.csv.zip", index_col="Id", compression='zip').drop("smiles", axis=1).to_numpy()
+    y_train = pd.read_csv("dataset/train_labels.csv.zip", index_col="Id", compression='zip').to_numpy().squeeze(-1)
+    # regression model
+    regression_model = get_regression_model()
+
+def main():
+    #delete_models()
+    
+    if not os.path.exists('feature_extractor.pth'):
+        feature_extractor_model()
+    
+    if not os.path.exists('model.pth'):
+        train_model()
+
+    test()
+    
 
 # Main function. You don't have to change this
 if __name__ == '__main__':
