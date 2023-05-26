@@ -16,9 +16,9 @@ from sklearn.base import BaseEstimator, TransformerMixin
 device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 print(f"Using {device}")
 
-BATCH_SIZE = 64
-EPOCHS = 10
-LR = 0.002
+FEATURE_BATCH_SIZE = 10000
+FEATURE_EPOCHS = 200
+FEATURE_LR = 0.002
 
 def delete_models():
     for file in os.listdir("."):
@@ -73,7 +73,7 @@ class Feature_Net(nn.Module):
         x = self.fc8(x)
         return x
     
-def feature_extractor_model(batch_size=256, eval_size=1000):
+def feature_extractor_model(val= True, batch_size=256, eval_size=1000):
     """
     This function trains the feature extractor on the pretraining data.
 
@@ -85,30 +85,28 @@ def feature_extractor_model(batch_size=256, eval_size=1000):
     y = pd.read_csv("dataset/pretrain_labels.csv.zip", index_col="Id", compression='zip').to_numpy().squeeze(-1)
     print("Pretrain data loaded!")
     
-    
-    in_features = x.shape[-1]
-    x_tr, x_val, y_tr, y_val = train_test_split(x, y, test_size=eval_size, random_state=42, shuffle=True)
-    x_tr, x_val = torch.tensor(x_tr, dtype=torch.float), torch.tensor(x_val, dtype=torch.float)
-    y_tr, y_val = torch.tensor(y_tr, dtype=torch.float), torch.tensor(y_val, dtype=torch.float)
-    train_dataset = TensorDataset(x_tr,y_tr)
-    val_dataset = TensorDataset(x_val, y_val)
-    train_dataloader = DataLoader(train_dataset, batch_size=BATCH_SIZE, shuffle=True)
-    val_dataloader = DataLoader(val_dataset, batch_size=BATCH_SIZE, shuffle=True)
-    
-    
+    if val:
+        x_tr, x_val, y_tr, y_val = train_test_split(x, y, test_size=eval_size, random_state=42, shuffle=True, train_size=0.8)
+        x_tr, x_val = torch.tensor(x_tr, dtype=torch.float), torch.tensor(x_val, dtype=torch.float)
+        y_tr, y_val = torch.tensor(y_tr, dtype=torch.float), torch.tensor(y_val, dtype=torch.float)
+        train_dataset = TensorDataset(x_tr,y_tr)
+        val_dataset = TensorDataset(x_val, y_val)
+        val_dataloader = DataLoader(val_dataset, batch_size=FEATURE_BATCH_SIZE, shuffle=True)
+    else: 
+        train_dataset = TensorDataset(x,y)
+
+    train_dataloader = DataLoader(train_dataset, batch_size=FEATURE_BATCH_SIZE, shuffle=True)
+
     print("Training Feature model...")
     model = Feature_Net().to(device)
     wandb.watch(model, log="all")
 
     loss_fn = nn.MSELoss()
-    optimizer = torch.optim.Adamax(model.parameters(), lr=LR)
+    optimizer = torch.optim.Adamax(model.parameters(), lr=FEATURE_LR)
 
-    best_loss = float("inf")
-    for epoch in range(EPOCHS):
+    for epoch in range(FEATURE_EPOCHS):
         running_train_loss = 0.
-        running_val_loss = 0.
         train_batches = 0
-        val_batches = 0
         
         model.train()
         for data in train_dataloader:
@@ -124,35 +122,42 @@ def feature_extractor_model(batch_size=256, eval_size=1000):
             
             running_train_loss += loss.item()
             train_batches += 1
-        
-        model.eval()
-        with torch.no_grad():
-            for data in val_dataloader:
-                x, y = data
-                x = x.to(device)
-                y = y.to(device)
-                y_pred = model(x)
-                y_pred = torch.flatten(y_pred)
-                loss = loss_fn(y_pred, y)
-    
-                running_val_loss += loss.item()
-                val_batches += 1
-        
         av_train_loss = running_train_loss / train_batches
-        av_val_loss = running_val_loss / val_batches
-        wandb.log({"training_loss": av_train_loss, "validation_loss": av_val_loss})
+        wandblog = {"training_loss": av_train_loss}
+        
+        if val:
+            running_val_loss = 0.
+            val_batches = 0
+            model.eval()
+            with torch.no_grad():
+                for data in val_dataloader:
+                    x, y = data
+                    x = x.to(device)
+                    y = y.to(device)
+                    y_pred = model(x)
+                    y_pred = torch.flatten(y_pred)
+                    loss = loss_fn(y_pred, y)
+    
+                    running_val_loss += loss.item()
+                    val_batches += 1
+            av_val_loss = running_val_loss / val_batches
+            wandblog["validation_loss"] = av_val_loss
+        
+        wandb.log(wandblog)
 
-        if 20 <= epoch and (av_train_loss < best_loss or epoch % 10 == 9):
-            path = f"model_{epoch}.pth"
-            best_loss = min(best_loss, av_train_loss)
-            torch.save(model.state_dict(), path)
-            wandb.save(path)
-            os.system(f"cp {path} feature_extractor.pth")
+        #if 20 <= epoch and (av_train_loss < best_loss or epoch % 10 == 9):
+        #    path = f"model_{epoch}.pth"
+        #    best_loss = min(best_loss, av_train_loss)
+        #    torch.save(model.state_dict(), path)
+        #    wandb.save(path)
+        #    os.system(f"cp {path} feature_extractor.pth")
 
         if epoch % 10 == 9:
             print(f"epoch {epoch + 1} done.")
-
-    wandb.save("feature_extractor.pth")
+            
+    path = "feature_extractor.pth"
+    torch.save(model.state_dict(), path)
+    wandb.save(path)
     print("Done.")
 
 
@@ -189,8 +194,7 @@ def train_model():
     # load data
     x_train = pd.read_csv("dataset/train_features.csv.zip", index_col="Id", compression='zip').drop("smiles", axis=1).to_numpy()
     y_train = pd.read_csv("dataset/train_labels.csv.zip", index_col="Id", compression='zip').to_numpy().squeeze(-1)
-    # regression model
-    regression_model = get_regression_model()
+
 
 def main():
     #delete_models()
