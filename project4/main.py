@@ -11,16 +11,17 @@ import torch.nn.functional as F
 from torch.utils.data import DataLoader, TensorDataset
 
 from sklearn.model_selection import train_test_split
+import multiprocessing
 
-device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
+device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 print(f"Using {device}")
 
 FEATURE_BATCH_SIZE = 10000
-FEATURE_EPOCHS = 150
+FEATURE_EPOCHS = 500
 FEATURE_LR = 0.002
 
 SMALL_BATCH_SIZE = 1
-SMALL_EPOCHS = 100
+SMALL_EPOCHS = 200
 SMALL_LR = 0.002
 
 def delete_models():
@@ -41,19 +42,14 @@ class Feature_Net(nn.Module):
         self.fc2 = nn.Linear(1000, 1000)
         self.fc3 = nn.Linear(1000, 1000)
         self.fc4 = nn.Linear(1000, 512)
-        self.fc5 = nn.Linear(512, 124)
-        self.fc6 = nn.Linear(124, 36)
-        self.fc7 = nn.Linear(36, 12)
-        self.fc8 = nn.Linear(12, 1)
+        self.fc5 = nn.Linear(512, 256)
+        self.fc6 = nn.Linear(256, 128)
+        self.fc7 = nn.Linear(128, 64)
+        self.fc8 = nn.Linear(64, 32)
+        self.fc9 = nn.Linear(32, 16)
+        self.fc10 = nn.Linear(16, 1)
 
     def forward(self, x):
-        """
-        The forward pass of the model.
-
-        input: x: torch.Tensor, the input to the model
-
-        output: x: torch.Tensor, the output of the model
-        """
         x = self.fc1(x)
         x = F.dropout(x, p=0.2)
         x = F.leaky_relu(x)
@@ -73,7 +69,14 @@ class Feature_Net(nn.Module):
         x = F.dropout(x, p=0.2)
         x = F.leaky_relu(x)
         x = self.fc7(x)
+        x = F.dropout(x, p=0.2)
+        x = F.leaky_relu(x)
         x = self.fc8(x)
+        x = F.dropout(x, p=0.2)
+        x = F.leaky_relu(x)
+        x = self.fc9(x)
+        x = F.leaky_relu(x)
+        x = self.fc10(x)
         return x
     
 def feature_extractor_model(val= True):
@@ -88,7 +91,8 @@ def feature_extractor_model(val= True):
     y = pd.read_csv("dataset/pretrain_labels.csv.zip", index_col="Id", compression='zip').to_numpy().squeeze(-1)
     print("Pretrain data loaded!")
     
-    train(x,y,"feature",FEATURE_EPOCHS, FEATURE_BATCH_SIZE, FEATURE_LR, val)
+    model = Feature_Net().to(device)
+    train(x,y, model, "feature",FEATURE_EPOCHS, FEATURE_BATCH_SIZE, FEATURE_LR, val)
 
 def test():
     x = pd.read_csv("dataset/test_features.csv.zip", index_col="Id", compression='zip').drop("smiles", axis=1)
@@ -110,7 +114,7 @@ def test():
     print("Predictions saved, all done!")
     return
 
-def train(x, y, name, epochs, batchsize, lr, val):
+def train(x, y, model, name, epochs, batchsize, lr, val):
     if val:
         x_tr, x_val, y_tr, y_val = train_test_split(x, y, test_size=0.2, random_state=42, shuffle=True)
         x_tr, x_val = torch.tensor(x_tr, dtype=torch.float), torch.tensor(x_val, dtype=torch.float)
@@ -125,10 +129,6 @@ def train(x, y, name, epochs, batchsize, lr, val):
     train_dataloader = DataLoader(train_dataset, batch_size=batchsize, shuffle=True)
 
     print(f"Training {name} model...")
-    model = Feature_Net().to(device)
-    
-    if name == "small":
-        model.load_state_dict(torch.load('feature.pth', map_location=device))
 
         
     wandb.watch(model, log="all")
@@ -190,8 +190,15 @@ def train_model(val = True):
     # load data and feature model
     x = pd.read_csv("dataset/train_features.csv.zip", index_col="Id", compression='zip').drop("smiles", axis=1).to_numpy()
     y = pd.read_csv("dataset/train_labels.csv.zip", index_col="Id", compression='zip').to_numpy().squeeze(-1)
+    
+    model = Feature_Net().to(device)
+    model.load_state_dict(torch.load('feature.pth', map_location=device))
+    #for name, param in model.named_parameters():
+    #    if name in ['fc1.weight', 'fc1.bias', 'fc2.weight', 'fc2.bias', 'fc3.weight', 'fc3.bias', 'fc4.weight', 'fc4.bias']:
+    #        param.requires_grad = False
 
-    train(x, y, "small", SMALL_EPOCHS, SMALL_BATCH_SIZE, SMALL_LR, val)
+    
+    train(x, y, model, "small", SMALL_EPOCHS, SMALL_BATCH_SIZE, SMALL_LR, val)
 
 
 
@@ -202,12 +209,12 @@ def main():
         wandb.init(project="project4IML")
     
     if not os.path.exists('feature.pth'):
-        feature_extractor_model(val = False)
+        feature_extractor_model(val = True)
     
     if not os.path.exists('small.pth'):
-        train_model(val = False)
+        train_model(val = True)
 
-    if os.path.exists('small.pth'):
+    if not os.path.exists('results.csv'):
         test()
     
 if __name__ == '__main__':
