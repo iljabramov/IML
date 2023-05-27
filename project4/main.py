@@ -218,6 +218,7 @@ def main():
             'SMALL_LR': SMALL_LR
         }
         wandb.config.update(config)
+        wandb.save("main.py")
     
     if not os.path.exists('feature.pth'):
         feature_extractor_model(val = True)
