@@ -91,25 +91,6 @@ def feature_extractor_model(val= True, batch_size=256, eval_size=1000):
     
     train(x,y,"feature",FEATURE_EPOCHS, FEATURE_BATCH_SIZE, FEATURE_LR, val)
 
-
-
-
-    def make_features(x):
-        """
-        This function extracts features from the training and test data, used in the actual pipeline 
-        after the pretraining.
-
-        input: x: np.ndarray, the features of the training or test set
-
-        output: features: np.ndarray, the features extracted from the training or test set, propagated
-        further in the pipeline
-        """
-        model.eval()
-        # TODO: Implement the feature extraction, a part of a pretrained model used later in the pipeline.
-        return x
-
-    return make_features
-
 def test():
     x_test = pd.read_csv("dataset/test_features.csv.zip", index_col="Id", compression='zip').drop("smiles", axis=1)
     y_pred = np.zeros(x_test.shape[0])
@@ -139,7 +120,7 @@ def train(x, y, name, epochs, batchsize, lr, val):
     model = Feature_Net().to(device)
     
     if name == "small":
-        model.load_state_dict(torch.load('feature_extractor.pth', map_location=device))
+        model.load_state_dict(torch.load('feature.pth', map_location=device))
 
         
     wandb.watch(model, log="all")
@@ -202,7 +183,8 @@ def train_model():
     x = pd.read_csv("dataset/train_features.csv.zip", index_col="Id", compression='zip').drop("smiles", axis=1).to_numpy()
     y = pd.read_csv("dataset/train_labels.csv.zip", index_col="Id", compression='zip').to_numpy().squeeze(-1)
 
-    
+    train(x, y, "small", SMALL_EPOCHS, SMALL_BATCH_SIZE, SMALL_LR, True)
+
 
 
 def main():
@@ -210,10 +192,10 @@ def main():
     
     wandb.init(project="project4IML")
     
-    if not os.path.exists('feature_extractor.pth'):
+    if not os.path.exists('feature.pth'):
         feature_extractor_model()
     
-    if not os.path.exists('model.pth'):
+    if not os.path.exists('small.pth'):
         train_model()
 
     #test()
