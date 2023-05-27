@@ -18,9 +18,9 @@ print(f"Using {device}")
 
 FEATURE_BATCH_SIZE = 10000
 FEATURE_EPOCHS = 1000
-FEATURE_LR = 0.002
+FEATURE_LR = 0.001
 
-SMALL_BATCH_SIZE = 4
+SMALL_BATCH_SIZE = 2
 SMALL_EPOCHS = 200
 SMALL_LR = 0.002
 
@@ -79,7 +79,7 @@ class Feature_Net(nn.Module):
         x = self.fc10(x)
         return x
     
-def feature_extractor_model(val= True):
+def feature_extractor_model(val= True, val_size = 0.2):
     """
     This function trains the feature extractor on the pretraining data.
 
@@ -92,7 +92,7 @@ def feature_extractor_model(val= True):
     print("Pretrain data loaded!")
     
     model = Feature_Net().to(device)
-    train(x,y, model, "feature",FEATURE_EPOCHS, FEATURE_BATCH_SIZE, FEATURE_LR, val)
+    train(x,y, model, "feature",FEATURE_EPOCHS, FEATURE_BATCH_SIZE, FEATURE_LR, val, val_size)
 
 def test():
     x = pd.read_csv("dataset/test_features.csv.zip", index_col="Id", compression='zip').drop("smiles", axis=1)
@@ -114,9 +114,9 @@ def test():
     print("Predictions saved, all done!")
     return
 
-def train(x, y, model, name, epochs, batchsize, lr, val):
+def train(x, y, model, name, epochs, batchsize, lr, val, val_size):
     if val:
-        x_tr, x_val, y_tr, y_val = train_test_split(x, y, test_size=0.2, random_state=42, shuffle=True)
+        x_tr, x_val, y_tr, y_val = train_test_split(x, y, test_size=val_size, random_state=42, shuffle=True)
         x_tr, x_val = torch.tensor(x_tr, dtype=torch.float), torch.tensor(x_val, dtype=torch.float)
         y_tr, y_val = torch.tensor(y_tr, dtype=torch.float), torch.tensor(y_val, dtype=torch.float)
         train_dataset = TensorDataset(x_tr,y_tr)
@@ -186,7 +186,7 @@ def train(x, y, model, name, epochs, batchsize, lr, val):
     print("Done.")
     return
 
-def train_model(val = True):
+def train_model(val = True, val_size = 0.2):
     # load data and feature model
     x = pd.read_csv("dataset/train_features.csv.zip", index_col="Id", compression='zip').drop("smiles", axis=1).to_numpy()
     y = pd.read_csv("dataset/train_labels.csv.zip", index_col="Id", compression='zip').to_numpy().squeeze(-1)
@@ -198,7 +198,7 @@ def train_model(val = True):
     #        param.requires_grad = False
 
     
-    train(x, y, model, "small", SMALL_EPOCHS, SMALL_BATCH_SIZE, SMALL_LR, val)
+    train(x, y, model, "small", SMALL_EPOCHS, SMALL_BATCH_SIZE, SMALL_LR, val, val_size)
 
 
 
@@ -221,10 +221,10 @@ def main():
         wandb.save("main.py")
     
     if not os.path.exists('feature.pth'):
-        feature_extractor_model(val = True)
+        feature_extractor_model(val = True, val_size= 0.1)
     
     if not os.path.exists('small.pth'):
-        train_model(val = True)
+        train_model(val = True, val_size= 0.25)
 
     if not os.path.exists('results.csv'):
         test()
