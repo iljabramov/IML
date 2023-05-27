@@ -5,3 +5,4 @@ embeddings/
 miniset/
 featuremodel/
 *.pth
+*.csv

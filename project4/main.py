@@ -11,17 +11,16 @@ import torch.nn.functional as F
 from torch.utils.data import DataLoader, TensorDataset
 
 from sklearn.model_selection import train_test_split
-from sklearn.base import BaseEstimator, TransformerMixin
 
 device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 print(f"Using {device}")
 
 FEATURE_BATCH_SIZE = 10000
-FEATURE_EPOCHS = 200
+FEATURE_EPOCHS = 150
 FEATURE_LR = 0.002
 
 SMALL_BATCH_SIZE = 1
-SMALL_EPOCHS = 200
+SMALL_EPOCHS = 100
 SMALL_LR = 0.002
 
 def delete_models():
@@ -77,7 +76,7 @@ class Feature_Net(nn.Module):
         x = self.fc8(x)
         return x
     
-def feature_extractor_model(val= True, batch_size=256, eval_size=1000):
+def feature_extractor_model(val= True):
     """
     This function trains the feature extractor on the pretraining data.
 
@@ -92,13 +91,21 @@ def feature_extractor_model(val= True, batch_size=256, eval_size=1000):
     train(x,y,"feature",FEATURE_EPOCHS, FEATURE_BATCH_SIZE, FEATURE_LR, val)
 
 def test():
-    x_test = pd.read_csv("dataset/test_features.csv.zip", index_col="Id", compression='zip').drop("smiles", axis=1)
-    y_pred = np.zeros(x_test.shape[0])
-    # TODO: Implement the pipeline. It should contain feature extraction and regression. You can optionally
-    # use other sklearn tools, such as StandardScaler, FunctionTransformer, etc.
+    x = pd.read_csv("dataset/test_features.csv.zip", index_col="Id", compression='zip').drop("smiles", axis=1)
+    print(f"Testing model...")
+    
+    
 
-    assert y_pred.shape == (x_test.shape[0],)
-    y_pred = pd.DataFrame({"y": y_pred}, index=x_test.index)
+    model = Feature_Net().to(device)
+    model.load_state_dict(torch.load('small.pth', map_location=device))
+
+    model.eval()
+    with torch.no_grad():
+        y_pred = torch.flatten(model(torch.from_numpy(x.to_numpy()).to(torch.float32)))
+    
+
+    assert y_pred.shape == (x.shape[0],)
+    y_pred = pd.DataFrame({"y": y_pred}, index=x.index)
     y_pred.to_csv("results.csv", index_label="Id")
     print("Predictions saved, all done!")
     return
@@ -178,27 +185,29 @@ def train(x, y, name, epochs, batchsize, lr, val):
     print("Done.")
     return
 
-def train_model():
+def train_model(val = True):
     # load data and feature model
     x = pd.read_csv("dataset/train_features.csv.zip", index_col="Id", compression='zip').drop("smiles", axis=1).to_numpy()
     y = pd.read_csv("dataset/train_labels.csv.zip", index_col="Id", compression='zip').to_numpy().squeeze(-1)
 
-    train(x, y, "small", SMALL_EPOCHS, SMALL_BATCH_SIZE, SMALL_LR, True)
+    train(x, y, "small", SMALL_EPOCHS, SMALL_BATCH_SIZE, SMALL_LR, val)
 
 
 
 def main():
     #delete_models()
     
-    wandb.init(project="project4IML")
+    if not os.path.exists('feature.pth') or not os.path.exists('small.pth'):
+        wandb.init(project="project4IML")
     
     if not os.path.exists('feature.pth'):
-        feature_extractor_model()
+        feature_extractor_model(val = False)
     
     if not os.path.exists('small.pth'):
-        train_model()
+        train_model(val = False)
 
-    #test()
+    if os.path.exists('small.pth'):
+        test()
     
 if __name__ == '__main__':
     main()
