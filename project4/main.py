@@ -17,10 +17,10 @@ device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 print(f"Using {device}")
 
 FEATURE_BATCH_SIZE = 10000
-FEATURE_EPOCHS = 500
-FEATURE_LR = 0.002
+FEATURE_EPOCHS = 1000
+FEATURE_LR = 0.003
 
-SMALL_BATCH_SIZE = 1
+SMALL_BATCH_SIZE = 4
 SMALL_EPOCHS = 200
 SMALL_LR = 0.002
 
@@ -175,7 +175,7 @@ def train(x, y, model, name, epochs, batchsize, lr, val):
             av_val_loss = running_val_loss / val_batches
             wandblog[name + "_validation_loss"] = av_val_loss
         
-        wandb.log(wandblog)
+        wandb.log(wandblog, step = epoch)
 
         if epoch % 10 == 9:
             print(f"epoch {epoch + 1} done.")
@@ -207,6 +207,17 @@ def main():
     
     if not os.path.exists('feature.pth') or not os.path.exists('small.pth'):
         wandb.init(project="project4IML")
+        # Define and log parameters
+        config = {
+            'FEATURE_BATCH_SIZE' : FEATURE_BATCH_SIZE,
+            'FEATURE_EPOCHS' : FEATURE_EPOCHS,
+            'FEATURE_LR' : FEATURE_LR,
+
+            'SMALL_BATCH_SIZE' : SMALL_BATCH_SIZE,
+            'SMALL_EPOCHS' : SMALL_EPOCHS,
+            'SMALL_LR': SMALL_LR
+        }
+        wandb.config.update(config)
     
     if not os.path.exists('feature.pth'):
         feature_extractor_model(val = True)
