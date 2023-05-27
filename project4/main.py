@@ -101,7 +101,7 @@ def test():
 
     model.eval()
     with torch.no_grad():
-        y_pred = torch.flatten(model(torch.from_numpy(x.to_numpy()).to(torch.float32)))
+        y_pred = torch.flatten(model(torch.tensor(x.to_numpy(), dtype=torch.float)))
     
 
     assert y_pred.shape == (x.shape[0],)
@@ -119,6 +119,7 @@ def train(x, y, name, epochs, batchsize, lr, val):
         val_dataset = TensorDataset(x_val, y_val)
         val_dataloader = DataLoader(val_dataset, batch_size=batchsize, shuffle=True)
     else: 
+        x, y = torch.tensor(x, dtype=torch.float), torch.tensor(y, dtype=torch.float)
         train_dataset = TensorDataset(x,y)
 
     train_dataloader = DataLoader(train_dataset, batch_size=batchsize, shuffle=True)
