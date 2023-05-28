@@ -18,11 +18,13 @@ print(f"Using {device}")
 
 FEATURE_BATCH_SIZE = 10000
 FEATURE_EPOCHS = 1000
-FEATURE_LR = 0.001
+FEATURE_LR = 0.002
 
-SMALL_BATCH_SIZE = 2
-SMALL_EPOCHS = 200
-SMALL_LR = 0.002
+SMALL_BATCH_SIZE = 1
+SMALL_EPOCHS = 400
+SMALL_LR = 0.001
+
+FREEZE = ['fc1.weight', 'fc1.bias']
 
 def delete_models():
     for file in os.listdir("."):
@@ -38,16 +40,13 @@ class Feature_Net(nn.Module):
         The constructor of the model.
         """
         super().__init__()
-        self.fc1 = nn.Linear(1000, 1000)
-        self.fc2 = nn.Linear(1000, 1000)
-        self.fc3 = nn.Linear(1000, 1000)
-        self.fc4 = nn.Linear(1000, 512)
-        self.fc5 = nn.Linear(512, 256)
-        self.fc6 = nn.Linear(256, 128)
-        self.fc7 = nn.Linear(128, 64)
-        self.fc8 = nn.Linear(64, 32)
-        self.fc9 = nn.Linear(32, 16)
-        self.fc10 = nn.Linear(16, 1)
+        self.fc1 = nn.Linear(1000, 512)
+        self.fc2 = nn.Linear(512, 256)
+        self.fc3 = nn.Linear(256, 128)
+        self.fc4 = nn.Linear(128, 64)
+        self.fc5 = nn.Linear(64, 32)
+        self.fc6 = nn.Linear(32, 16)
+        self.fc7 = nn.Linear(16, 1)
 
     def forward(self, x):
         x = self.fc1(x)
@@ -63,20 +62,10 @@ class Feature_Net(nn.Module):
         x = F.dropout(x, p=0.2)
         x = F.leaky_relu(x)
         x = self.fc5(x)
-        x = F.dropout(x, p=0.2)
         x = F.leaky_relu(x)
         x = self.fc6(x)
-        x = F.dropout(x, p=0.2)
         x = F.leaky_relu(x)
         x = self.fc7(x)
-        x = F.dropout(x, p=0.2)
-        x = F.leaky_relu(x)
-        x = self.fc8(x)
-        x = F.dropout(x, p=0.2)
-        x = F.leaky_relu(x)
-        x = self.fc9(x)
-        x = F.leaky_relu(x)
-        x = self.fc10(x)
         return x
     
 def feature_extractor_model(val= True, val_size = 0.2):
@@ -115,6 +104,21 @@ def test():
     return
 
 def train(x, y, model, name, epochs, batchsize, lr, val, val_size):
+    wandb.init(project="project4IML")
+    # Define and log parameters
+    config = {
+        'FEATURE_BATCH_SIZE' : FEATURE_BATCH_SIZE,
+        'FEATURE_EPOCHS' : FEATURE_EPOCHS,
+        'FEATURE_LR' : FEATURE_LR,
+
+        'SMALL_BATCH_SIZE' : SMALL_BATCH_SIZE,
+        'SMALL_EPOCHS' : SMALL_EPOCHS,
+        'SMALL_LR': SMALL_LR,
+        'FREEZE' : FREEZE,
+    }
+    wandb.config.update(config)
+    wandb.save("main.py")
+    
     if val:
         x_tr, x_val, y_tr, y_val = train_test_split(x, y, test_size=val_size, random_state=42, shuffle=True)
         x_tr, x_val = torch.tensor(x_tr, dtype=torch.float), torch.tensor(x_val, dtype=torch.float)
@@ -138,7 +142,7 @@ def train(x, y, model, name, epochs, batchsize, lr, val, val_size):
 
     for epoch in range(epochs):
         running_train_loss = 0.
-        train_batches = 0
+        train_samples = 0
         
         model.train()
         for data in train_dataloader:
@@ -152,14 +156,14 @@ def train(x, y, model, name, epochs, batchsize, lr, val, val_size):
             loss.backward()
             optimizer.step()
             
-            running_train_loss += loss.item()
-            train_batches += 1
-        av_train_loss = running_train_loss / train_batches
+            running_train_loss += loss.item() * x.size(0)
+            train_samples += x.size(0)
+        av_train_loss = running_train_loss / train_samples
         wandblog = {name + "_training_loss": av_train_loss}
         
         if val:
             running_val_loss = 0.
-            val_batches = 0
+            val_samples = 0
             model.eval()
             with torch.no_grad():
                 for data in val_dataloader:
@@ -170,12 +174,12 @@ def train(x, y, model, name, epochs, batchsize, lr, val, val_size):
                     y_pred = torch.flatten(y_pred)
                     loss = loss_fn(y_pred, y)
     
-                    running_val_loss += loss.item()
-                    val_batches += 1
-            av_val_loss = running_val_loss / val_batches
+                    running_val_loss += loss.item() * x.size(0)
+                    val_samples += x.size(0)
+            av_val_loss = running_val_loss / val_samples
             wandblog[name + "_validation_loss"] = av_val_loss
         
-        wandb.log(wandblog, step = epoch)
+        wandb.log(wandblog)
 
         if epoch % 10 == 9:
             print(f"epoch {epoch + 1} done.")
@@ -184,6 +188,7 @@ def train(x, y, model, name, epochs, batchsize, lr, val, val_size):
     torch.save(model.state_dict(), path)
     wandb.save(path)
     print("Done.")
+    wandb.finish()
     return
 
 def train_model(val = True, val_size = 0.2):
@@ -193,9 +198,9 @@ def train_model(val = True, val_size = 0.2):
     
     model = Feature_Net().to(device)
     model.load_state_dict(torch.load('feature.pth', map_location=device))
-    #for name, param in model.named_parameters():
-    #    if name in ['fc1.weight', 'fc1.bias', 'fc2.weight', 'fc2.bias', 'fc3.weight', 'fc3.bias', 'fc4.weight', 'fc4.bias']:
-    #        param.requires_grad = False
+    for name, param in model.named_parameters():
+        if name in FREEZE:
+            param.requires_grad = False
 
     
     train(x, y, model, "small", SMALL_EPOCHS, SMALL_BATCH_SIZE, SMALL_LR, val, val_size)
@@ -204,27 +209,12 @@ def train_model(val = True, val_size = 0.2):
 
 def main():
     #delete_models()
-    
-    if not os.path.exists('feature.pth') or not os.path.exists('small.pth'):
-        wandb.init(project="project4IML")
-        # Define and log parameters
-        config = {
-            'FEATURE_BATCH_SIZE' : FEATURE_BATCH_SIZE,
-            'FEATURE_EPOCHS' : FEATURE_EPOCHS,
-            'FEATURE_LR' : FEATURE_LR,
-
-            'SMALL_BATCH_SIZE' : SMALL_BATCH_SIZE,
-            'SMALL_EPOCHS' : SMALL_EPOCHS,
-            'SMALL_LR': SMALL_LR
-        }
-        wandb.config.update(config)
-        wandb.save("main.py")
-    
+  
     if not os.path.exists('feature.pth'):
-        feature_extractor_model(val = True, val_size= 0.1)
+        feature_extractor_model(val = False, val_size= 0.1)
     
     if not os.path.exists('small.pth'):
-        train_model(val = True, val_size= 0.25)
+        train_model(val = False, val_size= 0.25)
 
     if not os.path.exists('results.csv'):
         test()
