@@ -41,31 +41,19 @@ class Feature_Net(nn.Module):
         """
         super().__init__()
         self.fc1 = nn.Linear(1000, 512)
-        self.fc2 = nn.Linear(512, 256)
-        self.fc3 = nn.Linear(256, 128)
-        self.fc4 = nn.Linear(128, 64)
-        self.fc5 = nn.Linear(64, 32)
-        self.fc6 = nn.Linear(32, 16)
-        self.fc7 = nn.Linear(16, 1)
+        self.fc2 = nn.Linear(512, 128)
+        self.fc3 = nn.Linear(128, 32)
+        self.fc4 = nn.Linear(32, 1)
 
     def forward(self, x):
         x = self.fc1(x)
         x = F.dropout(x, p=0.2)
         x = F.leaky_relu(x)
         x = self.fc2(x)
-        x = F.dropout(x, p=0.2)
         x = F.leaky_relu(x)
         x = self.fc3(x)
-        x = F.dropout(x, p=0.2)
         x = F.leaky_relu(x)
         x = self.fc4(x)
-        x = F.dropout(x, p=0.2)
-        x = F.leaky_relu(x)
-        x = self.fc5(x)
-        x = F.leaky_relu(x)
-        x = self.fc6(x)
-        x = F.leaky_relu(x)
-        x = self.fc7(x)
         return x
     
 def feature_extractor_model(val= True, val_size = 0.2):
