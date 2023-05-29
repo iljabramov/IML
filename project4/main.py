@@ -16,9 +16,9 @@ import multiprocessing
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 print(f"Using {device}")
 
-FEATURE_BATCH_SIZE = 10000
-FEATURE_EPOCHS = 1000
-FEATURE_LR = 0.002
+FEATURE_BATCH_SIZE = 32
+FEATURE_EPOCHS = 200
+FEATURE_LR = 0.001
 
 SMALL_BATCH_SIZE = 1
 SMALL_EPOCHS = 400
@@ -104,7 +104,7 @@ def test():
     return
 
 def train(x, y, model, name, epochs, batchsize, lr, val, val_size):
-    wandb.init(project="project4IML")
+    wandb.init(project="project4IML", group="tweak-params-lyric-dawn-113-fresh-haze-112")
     # Define and log parameters
     config = {
         'FEATURE_BATCH_SIZE' : FEATURE_BATCH_SIZE,
@@ -198,10 +198,17 @@ def train_model(val = True, val_size = 0.2):
     
     model = Feature_Net().to(device)
     model.load_state_dict(torch.load('feature.pth', map_location=device))
+    
+    # freeze first layers
     for name, param in model.named_parameters():
         if name in FREEZE:
             param.requires_grad = False
-
+    
+    # deactive first dropout
+    #for module in model.modules():
+    #    if isinstance(module, torch.nn.Dropout):
+    #        module.p = 0.0 
+    #        break
     
     train(x, y, model, "small", SMALL_EPOCHS, SMALL_BATCH_SIZE, SMALL_LR, val, val_size)
 
