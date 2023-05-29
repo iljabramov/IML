@@ -15,7 +15,7 @@ from sklearn.model_selection import train_test_split
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 print(f"Using {device}")
 
-FEATURE_BATCH_SIZE = 32
+FEATURE_BATCH_SIZE = 128
 FEATURE_EPOCHS = 200
 FEATURE_LR = 0.001
 
@@ -207,11 +207,11 @@ def main():
     if not os.path.exists('feature.pth'):
         feature_extractor_model(val = True, val_size= 0.1)
     
-    if not os.path.exists('small.pth'):
-        train_model(val = True, val_size= 0.25)
+    #if not os.path.exists('small.pth'):
+    #    train_model(val = True, val_size= 0.25)
 
-    if not os.path.exists('results.csv'):
-        test()
+    #if not os.path.exists('results.csv'):
+    #    test()
     
 if __name__ == '__main__':
     main()
