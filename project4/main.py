@@ -16,12 +16,12 @@ import multiprocessing
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 print(f"Using {device}")
 
-FEATURE_BATCH_SIZE = 32
-FEATURE_EPOCHS = 50
-FEATURE_LR = 0.001
+FEATURE_BATCH_SIZE = 10000
+FEATURE_EPOCHS = 1000
+FEATURE_LR = 0.002
 
 SMALL_BATCH_SIZE = 1
-SMALL_EPOCHS = 150
+SMALL_EPOCHS = 400
 SMALL_LR = 0.001
 
 FREEZE = ['fc1.weight', 'fc1.bias']
@@ -40,17 +40,32 @@ class Feature_Net(nn.Module):
         The constructor of the model.
         """
         super().__init__()
-        self.fc1 = nn.Linear(1000, 128)
-        self.fc2 = nn.Linear(128, 32)
-        self.fc3 = nn.Linear(32, 1)
+        self.fc1 = nn.Linear(1000, 512)
+        self.fc2 = nn.Linear(512, 256)
+        self.fc3 = nn.Linear(256, 128)
+        self.fc4 = nn.Linear(128, 64)
+        self.fc5 = nn.Linear(64, 32)
+        self.fc6 = nn.Linear(32, 16)
+        self.fc7 = nn.Linear(16, 1)
 
     def forward(self, x):
-        x = F.dropout(x, p=0.2)
         x = self.fc1(x)
+        x = F.dropout(x, p=0.2)
         x = F.leaky_relu(x)
         x = self.fc2(x)
+        x = F.dropout(x, p=0.2)
         x = F.leaky_relu(x)
         x = self.fc3(x)
+        x = F.dropout(x, p=0.2)
+        x = F.leaky_relu(x)
+        x = self.fc4(x)
+        x = F.dropout(x, p=0.2)
+        x = F.leaky_relu(x)
+        x = self.fc5(x)
+        x = F.leaky_relu(x)
+        x = self.fc6(x)
+        x = F.leaky_relu(x)
+        x = self.fc7(x)
         return x
     
 def feature_extractor_model(val= True, val_size = 0.2):
