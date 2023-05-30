@@ -8,43 +8,28 @@ import torch.nn as nn
 import os
 import wandb
 from torch.utils.data import DataLoader, TensorDataset
+import xgboost as xgb
+from sklearn.metrics import mean_squared_error
+
 
 from sklearn.model_selection import train_test_split
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 print(f"Using {device}")
 
-FEATURE_BATCH_SIZE = 32
-FEATURE_EPOCHS = 150
-FEATURE_LR = 0.001
+FEATURE_EPOCHS = 80
+FEATURE_LR = 0.01
+FEATURE_BOOST_ROUND = 80
 
-SMALL_BATCH_SIZE = 1
-SMALL_EPOCHS = 400
-SMALL_LR = 0.001
-
-FEATURE_MODEL = nn.Sequential(
-        nn.Linear(1000, 512),
-        nn.ReLU(),
-        nn.Dropout(0.2),
-        nn.Linear(512, 128),
-        nn.ReLU(),
-        nn.Linear(128, 32),
-        nn.ReLU(),
-        nn.Linear(32, 1),
-    )
-
-SMALL_MODEL = nn.Sequential(
-        nn.Linear(32, 32),
-        nn.ReLU(),
-        nn.Dropout(0.7),
-        nn.Linear(32, 1),
-    )
+SMALL_EPOCHS = 30
+SMALL_LR = 0.05
+SMALL_BOOST_ROUND = 5
 
 #FREEZE = ['fc1.weight', 'fc1.bias', 'fc2.weight', 'fc2.bias', 'fc3.weight', 'fc3.bias']
 
 def delete_models():
     for file in os.listdir("."):
-        if file.endswith(".pth"):
+        if file.endswith(".model"):
             os.remove(file)
 
 def feature_extractor_model(val= True, val_size = 0.2):
@@ -59,29 +44,20 @@ def feature_extractor_model(val= True, val_size = 0.2):
     y = pd.read_csv("dataset/pretrain_labels.csv.zip", index_col="Id", compression='zip').to_numpy().squeeze(-1)
     print("Pretrain data loaded!")
     
-    model = FEATURE_MODEL.to(device)
-    
-    train(x,y, model, "feature",FEATURE_EPOCHS, FEATURE_BATCH_SIZE, FEATURE_LR, val, val_size)
-
-def embed(x):
-    model = FEATURE_MODEL.to(device)
-    model.load_state_dict(torch.load('feature.pth', map_location=device))
-    model = nn.Sequential(*list(model.children())[:-1])
-    model.eval()
-    with torch.no_grad():
-        return model(torch.tensor(x, dtype=torch.float))
+    train(x,y, None, "feature",FEATURE_EPOCHS, FEATURE_LR, val, val_size, FEATURE_BOOST_ROUND)
 
 def test():
     x_frame = pd.read_csv("dataset/test_features.csv.zip", index_col="Id", compression='zip').drop("smiles", axis=1)
+    x = x_frame.to_numpy()
     print(f"Testing model...")
     
-    x = embed(x_frame.to_numpy())
         
-    model = SMALL_MODEL.to(device)
-    model.load_state_dict(torch.load('small.pth', map_location=device))
-    model.eval()
-    with torch.no_grad():
-        y_pred = torch.flatten(model(x))
+    # Initialize a new booster
+    booster = xgb.Booster()
+
+    # Load the model from the file
+    booster.load_model('small.model')
+    y_pred = booster.predict(xgb.DMatrix(x))
     
 
     assert y_pred.shape == (x.shape[0],)
@@ -90,117 +66,96 @@ def test():
     print("Predictions saved, all done!")
     return
 
-def train(x, y, model, name, epochs, batchsize, lr, val, val_size):
+def train(x, y, path, name, epochs, lr, val, val_size, num_boost_round):
     wandb.init(project="project4IML", group="tweak-params-lyric-dawn-113-fresh-haze-112")
+    
     # Define and log parameters
     config = {
-        'FEATURE_BATCH_SIZE' : FEATURE_BATCH_SIZE,
         'FEATURE_EPOCHS' : FEATURE_EPOCHS,
         'FEATURE_LR' : FEATURE_LR,
 
-        'SMALL_BATCH_SIZE' : SMALL_BATCH_SIZE,
         'SMALL_EPOCHS' : SMALL_EPOCHS,
         'SMALL_LR': SMALL_LR,
-        #'FREEZE' : FREEZE,
     }
     wandb.config.update(config)
     wandb.save("main.py")
-    
+
     if val:
-        x_tr, x_val, y_tr, y_val = train_test_split(x, y, test_size=val_size, random_state=420, shuffle=True)
-        x_tr, x_val = torch.tensor(x_tr, dtype=torch.float), torch.tensor(x_val, dtype=torch.float)
-        y_tr, y_val = torch.tensor(y_tr, dtype=torch.float), torch.tensor(y_val, dtype=torch.float)
-        train_dataset = TensorDataset(x_tr,y_tr)
-        val_dataset = TensorDataset(x_val, y_val)
-        val_dataloader = DataLoader(val_dataset, batch_size=batchsize, shuffle=True)
-    else: 
-        x, y = torch.tensor(x, dtype=torch.float), torch.tensor(y, dtype=torch.float)
-        train_dataset = TensorDataset(x,y)
+        x_train, x_val, y_train, y_val = train_test_split(x, y, test_size=val_size, random_state=22, shuffle=True)
+        dtrain = xgb.DMatrix(x_train, label=y_train)
+        dval = xgb.DMatrix(x_val, label=y_val)
+    else:
+        x_train, y_train = x, y
+        dtrain = xgb.DMatrix(x, label=y)
 
-    train_dataloader = DataLoader(train_dataset, batch_size=batchsize, shuffle=True)
+    params = {
+        'n_jobs': 1,
+        'objective':'reg:squarederror',
+        'colsample_bytree': 0.7,
+        'learning_rate': lr,
+        'max_depth': 9,
+        'alpha': 0.01
+    }
 
-    print(f"Training {name} model...")
+    def evals_results():
+        train_preds = model.predict(dtrain)
+        train_loss = ((train_preds - y_train) ** 2).mean()
 
-        
-    wandb.watch(model, log="all")
-
-    loss_fn = nn.MSELoss()
-    optimizer = torch.optim.Adamax(model.parameters(), lr=lr)
-
-    for epoch in range(epochs):
-        running_train_loss = 0.
-        train_samples = 0
-        
-        model.train()
-        for data in train_dataloader:
-            x, y = data
-            x = x.to(device)
-            y = y.to(device)
-            optimizer.zero_grad()
-            y_pred = model(x)
-            y_pred = torch.flatten(y_pred)
-            loss = loss_fn(y_pred, y)
-            loss.backward()
-            optimizer.step()
-            
-            running_train_loss += loss.item() * x.size(0)
-            train_samples += x.size(0)
-        av_train_loss = running_train_loss / train_samples
-        wandblog = {name + "_training_loss": av_train_loss}
-        
         if val:
-            running_val_loss = 0.
-            val_samples = 0
-            model.eval()
-            with torch.no_grad():
-                for data in val_dataloader:
-                    x, y = data
-                    x = x.to(device)
-                    y = y.to(device)
-                    y_pred = model(x)
-                    y_pred = torch.flatten(y_pred)
-                    loss = loss_fn(y_pred, y)
+            val_preds = model.predict(dval)
+            val_loss = ((val_preds - y_val) ** 2).mean()
+            return train_loss, val_loss
+        else:
+            return train_loss, None
     
-                    running_val_loss += loss.item() * x.size(0)
-                    val_samples += x.size(0)
-            av_val_loss = running_val_loss / val_samples
-            wandblog[name + "_validation_loss"] = av_val_loss
+    if path is not None:
+        model = xgb.Booster()
+        # Load the model from the file
+        model.load_model('feature.model')
+    else:
+        model = xgb.train(params, dtrain, num_boost_round=1)
+    
+    # Train the model
+    for epoch in range(epochs):
+        model = xgb.train(params, dtrain, num_boost_round=num_boost_round, xgb_model=model)
         
-        wandb.log(wandblog)
+        train_loss, val_loss = evals_results()
 
-        if epoch % 10 == 9  or epochs <= 100:
-            print(f"epoch {epoch + 1} done.")
-            
-    path = name + ".pth"
-    torch.save(model.state_dict(), path)
-    wandb.save(path)
+        wandb.log({
+            f"{name}_train_loss": train_loss,
+            f"{name}_val_loss": val_loss
+        })
+        print(epoch)
+
+    # Save the model
+    model.save_model(name + ".model")
+
     print("Done.")
     wandb.finish()
     return
+
+
 
 def train_model(val = True, val_size = 0.2):
     # load data and feature model
     x = pd.read_csv("dataset/train_features.csv.zip", index_col="Id", compression='zip').drop("smiles", axis=1).to_numpy()
     y = pd.read_csv("dataset/train_labels.csv.zip", index_col="Id", compression='zip').to_numpy().squeeze(-1)
     
-    x = embed(x)
-    model = SMALL_MODEL.to(device)
-    
-    train(x, y, model, "small", SMALL_EPOCHS, SMALL_BATCH_SIZE, SMALL_LR, val, val_size)
+    train(x, y, "feature.model", "small", SMALL_EPOCHS, SMALL_LR, val, val_size, SMALL_BOOST_ROUND)
 
 
 
 def main():
     #delete_models()
   
-    if not os.path.exists('feature.pth'):
-        feature_extractor_model(val = True, val_size= 0.1)
+    if not os.path.exists('feature.model'):
+        feature_extractor_model(val = False, val_size= 0.1)
     
-    if not os.path.exists('small.pth'):
-        train_model(val = True, val_size= 0.25)
+    if not os.path.exists('small.model'):
+        train_model(val = False, val_size= 0.2)
 
     if not os.path.exists('results.csv'):
-       test()
+        test()
     
 if __name__ == '__main__':
     main()
